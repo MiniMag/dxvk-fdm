@@ -170,12 +170,12 @@ jobs:
           ninja -C build-x86 -j 2 \
             2>&1 | tee "$RUNNER_TEMP/dxvk-arm64ec-logs/ninja-x86-build.log"
 
-      - name: Verify DLL architectures and package both builds
+      - name: Verify DLL architectures and stage output directories
         shell: bash
         run: |
           set -euo pipefail
           packaging_dir="$RUNNER_TEMP/dxvk-fdm-package"
-          mkdir -p "$packaging_dir/system32" "$packaging_dir/x32" artifacts
+          mkdir -p "$packaging_dir/system32" "$packaging_dir/syswow64" artifacts
 
           arm64ec_dlls=(
             build-ec/src/d3d8/d3d8.dll
@@ -204,7 +204,7 @@ jobs:
 
           for dll in "${x86_dlls[@]}"; do
             test -f "$dll"
-            cp "$dll" "$packaging_dir/x32/"
+            cp "$dll" "$packaging_dir/syswow64/"
             echo "Inspecting Win32 x86 $dll"
             llvm-readobj --file-headers "$dll" \
               | tee -a "$RUNNER_TEMP/dxvk-arm64ec-logs/pe-headers.log"
@@ -214,17 +214,24 @@ jobs:
 
           for dll in d3d8.dll d3d9.dll d3d10core.dll d3d11.dll dxgi.dll; do
             test -f "$packaging_dir/system32/$dll"
-            test -f "$packaging_dir/x32/$dll"
+            test -f "$packaging_dir/syswow64/$dll"
           done
 
+          mkdir -p "$packaging_dir/arm64ec-zip/system32"
+          mkdir -p "$packaging_dir/win32-zip/syswow64"
+          cp "$packaging_dir/system32/"*.dll "$packaging_dir/arm64ec-zip/system32/"
+          cp "$packaging_dir/syswow64/"*.dll "$packaging_dir/win32-zip/syswow64/"
           (
-            cd "$packaging_dir"
+            cd "$packaging_dir/arm64ec-zip"
             zip -q -r "$GITHUB_WORKSPACE/artifacts/dxvk-2.6.2-arm64ec-${GITHUB_SHA}.zip" system32
           )
           (
-            cd "$packaging_dir"
-            zip -q -r "$GITHUB_WORKSPACE/artifacts/dxvk-2.6.2-win32-${GITHUB_SHA}.zip" x32
+            cd "$packaging_dir/win32-zip"
+            zip -q -r "$GITHUB_WORKSPACE/artifacts/dxvk-2.6.2-win32-${GITHUB_SHA}.zip" syswow64
           )
+
+          find "$packaging_dir/system32" "$packaging_dir/syswow64" -type f -print \
+            | sort | tee "$RUNNER_TEMP/dxvk-arm64ec-logs/dll-folders-contents.log"
 
       - name: Collect Meson diagnostics
         if: always()
@@ -249,12 +256,23 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload Win32 x86 DLLs
+      - name: Upload Win32 x86 DLL artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: dxvk-2.6.2-win32-${{ github.sha }}
           path: artifacts/dxvk-2.6.2-win32-${{ github.sha }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload system32 and syswow64 DLL folders
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxvk-2.6.2-fdm-arm64ec-x86-dll-folders-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/dxvk-fdm-package/system32/
+            ${{ runner.temp }}/dxvk-fdm-package/syswow64/
           if-no-files-found: error
           retention-days: 14
 
