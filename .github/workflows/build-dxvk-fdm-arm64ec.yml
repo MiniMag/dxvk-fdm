@@ -57,7 +57,8 @@ jobs:
             ninja-build \
             wget \
             unzip \
-            zip
+            zip \
+            jq
 
       - name: Set up glslang
         shell: bash
@@ -87,13 +88,21 @@ jobs:
 
           arm64ec_target="$(arm64ec-w64-mingw32-clang -print-target-triple)"
           arm64ec_cpp_target="$(arm64ec-w64-mingw32-clang++ -print-target-triple)"
+          x86_target="$(i686-w64-mingw32-clang -print-target-triple)"
+          x86_cpp_target="$(i686-w64-mingw32-clang++ -print-target-triple)"
           echo "ARM64EC C compiler target: $arm64ec_target"
           echo "ARM64EC C++ compiler target: $arm64ec_cpp_target"
+          echo "Win32 x86 C compiler target: $x86_target"
+          echo "Win32 x86 C++ compiler target: $x86_cpp_target"
           [[ "${arm64ec_target,,}" == *arm64ec* ]]
           [[ "${arm64ec_cpp_target,,}" == *arm64ec* ]]
+          [[ "${x86_target,,}" == i686-* ]]
+          [[ "${x86_cpp_target,,}" == i686-* ]]
 
           arm64ec-w64-mingw32-clang --version
           arm64ec-w64-mingw32-clang++ --version
+          i686-w64-mingw32-clang --version
+          i686-w64-mingw32-clang++ --version
           llvm-readobj --version
 
       - name: Configure ARM64EC cross file
@@ -118,6 +127,27 @@ jobs:
           EOF
           cat ../arm64ec.txt
 
+          cat > ../x86.txt <<'EOF'
+          [binaries]
+          c = 'i686-w64-mingw32-clang'
+          cpp = 'i686-w64-mingw32-clang++'
+          ar = 'llvm-ar'
+          strip = 'llvm-strip'
+          windres = 'i686-w64-mingw32-windres'
+          widl = 'i686-w64-mingw32-widl'
+          pkg-config = 'pkg-config'
+
+          [properties]
+          needs_exe_wrapper = true
+
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'x86'
+          cpu = 'x86'
+          endian = 'little'
+          EOF
+          cat ../x86.txt
+
       - name: Configure Meson
         shell: bash
         run: |
@@ -132,33 +162,110 @@ jobs:
           ninja -C build-ec -j 2 \
             2>&1 | tee "$RUNNER_TEMP/dxvk-arm64ec-logs/ninja-build.log"
 
-      - name: Verify ARM64EC DLLs and package
+      - name: Configure and build Win32 x86 DXVK
         shell: bash
         run: |
           set -euo pipefail
-          packaging_dir="$RUNNER_TEMP/dxvk-arm64ec-package"
-          mkdir -p "$packaging_dir/system32" artifacts
+          meson setup build-x86 --cross-file ../x86.txt -Dbuildtype=release -Dstrip=true \
+            2>&1 | tee "$RUNNER_TEMP/dxvk-arm64ec-logs/meson-x86-setup.log"
+          ninja -C build-x86 -j 2 \
+            2>&1 | tee "$RUNNER_TEMP/dxvk-arm64ec-logs/ninja-x86-build.log"
 
-          dlls=(
+      - name: Verify DLL architectures and package WCP
+        shell: bash
+        run: |
+          set -euo pipefail
+          packaging_dir="$RUNNER_TEMP/dxvk-fdm-package"
+          mkdir -p "$packaging_dir/system32" "$packaging_dir/syswow64" artifacts
+
+          arm64ec_dlls=(
             build-ec/src/d3d8/d3d8.dll
             build-ec/src/d3d9/d3d9.dll
             build-ec/src/d3d10/d3d10core.dll
             build-ec/src/d3d11/d3d11.dll
             build-ec/src/dxgi/dxgi.dll
           )
+          x86_dlls=(
+            build-x86/src/d3d8/d3d8.dll
+            build-x86/src/d3d9/d3d9.dll
+            build-x86/src/d3d10/d3d10core.dll
+            build-x86/src/d3d11/d3d11.dll
+            build-x86/src/dxgi/dxgi.dll
+          )
 
-          for dll in "${dlls[@]}"; do
+          for dll in "${arm64ec_dlls[@]}"; do
             test -f "$dll"
             cp "$dll" "$packaging_dir/system32/"
-            echo "Inspecting $dll"
+            echo "Inspecting ARM64EC $dll"
             llvm-readobj --file-headers "$dll" \
               | tee -a "$RUNNER_TEMP/dxvk-arm64ec-logs/pe-headers.log"
             llvm-readobj --file-headers "$dll" \
               | grep -Eq '^[[:space:]]*Machine:[[:space:]]*IMAGE_FILE_MACHINE_ARM64EC([[:space:]]|$)'
           done
 
+          for dll in "${x86_dlls[@]}"; do
+            test -f "$dll"
+            cp "$dll" "$packaging_dir/syswow64/"
+            echo "Inspecting Win32 x86 $dll"
+            llvm-readobj --file-headers "$dll" \
+              | tee -a "$RUNNER_TEMP/dxvk-arm64ec-logs/pe-headers.log"
+            llvm-readobj --file-headers "$dll" \
+              | grep -Eq '^[[:space:]]*Machine:[[:space:]]*IMAGE_FILE_MACHINE_I386([[:space:]]|$)'
+          done
+
+          for dll in d3d8.dll d3d9.dll d3d10core.dll d3d11.dll dxgi.dll; do
+            test -f "$packaging_dir/system32/$dll"
+            test -f "$packaging_dir/syswow64/$dll"
+          done
+
+          cat > "$packaging_dir/profile.json" <<EOF
+          {
+            "type": "DXVK",
+            "versionName": "2.6.2-fdm-arm64ec-x86-${GITHUB_SHA:0:7}",
+            "versionCode": 1,
+            "description": "DXVK 2.6.2 with FDM, BinSem, and GPLAsync; ARM64EC and x86 builds from ${GITHUB_SHA}",
+            "files": [
+              { "source": "system32/d3d10core.dll", "target": "\${system32}/d3d10core.dll" },
+              { "source": "system32/d3d11.dll", "target": "\${system32}/d3d11.dll" },
+              { "source": "system32/d3d8.dll", "target": "\${system32}/d3d8.dll" },
+              { "source": "system32/d3d9.dll", "target": "\${system32}/d3d9.dll" },
+              { "source": "system32/dxgi.dll", "target": "\${system32}/dxgi.dll" },
+              { "source": "syswow64/d3d10core.dll", "target": "\${syswow64}/d3d10core.dll" },
+              { "source": "syswow64/d3d11.dll", "target": "\${syswow64}/d3d11.dll" },
+              { "source": "syswow64/d3d8.dll", "target": "\${syswow64}/d3d8.dll" },
+              { "source": "syswow64/d3d9.dll", "target": "\${syswow64}/d3d9.dll" },
+              { "source": "syswow64/dxgi.dll", "target": "\${syswow64}/dxgi.dll" }
+            ]
+          }
+          EOF
+
+          jq -e '.type == "DXVK" and .versionCode == 1 and (.files | length == 10)' \
+            "$packaging_dir/profile.json" >/dev/null
+          for directory in system32 syswow64; do
+            for dll in d3d8.dll d3d9.dll d3d10core.dll d3d11.dll dxgi.dll; do
+              jq -e --arg directory "$directory" --arg dll "$dll" \
+                '.files | any(.source == ($directory + "/" + $dll) and .target == ("${" + $directory + "}/" + $dll))' \
+                "$packaging_dir/profile.json" >/dev/null
+            done
+          done
+
+          wcp="artifacts/dxvk-2.6.2-fdm-arm64ec-x86-${GITHUB_SHA}.wcp"
+          (cd "$packaging_dir" && ZSTD_CLEVEL=19 tar --zstd -cf "$GITHUB_WORKSPACE/$wcp" profile.json system32 syswow64)
+
+          tar --zstd -tf "$wcp" | tee "$RUNNER_TEMP/dxvk-arm64ec-logs/wcp-contents.log"
+          for directory in system32 syswow64; do
+            for dll in d3d8.dll d3d9.dll d3d10core.dll d3d11.dll dxgi.dll; do
+              tar --zstd -tf "$wcp" | grep -Fxq "$directory/$dll"
+            done
+          done
+          tar --zstd -xOf "$wcp" profile.json \
+            | tee "$RUNNER_TEMP/dxvk-arm64ec-logs/profile.json"
+
+          # Keep the original ARM64EC-only ZIP artifact available unchanged.
+          mkdir -p "$packaging_dir/arm64ec-zip/system32"
+          cp "$packaging_dir/system32/"*.dll "$packaging_dir/arm64ec-zip/system32/"
           (
-            cd "$packaging_dir"
+            cd "$packaging_dir/arm64ec-zip"
             zip -q -r "$GITHUB_WORKSPACE/artifacts/dxvk-2.6.2-arm64ec-${GITHUB_SHA}.zip" system32
           )
 
@@ -171,13 +278,26 @@ jobs:
             cp build-ec/meson-logs/meson-log.txt \
               "$RUNNER_TEMP/dxvk-arm64ec-logs/meson-log.txt"
           fi
+          if [[ -f build-x86/meson-logs/meson-log.txt ]]; then
+            cp build-x86/meson-logs/meson-log.txt \
+              "$RUNNER_TEMP/dxvk-arm64ec-logs/meson-x86-log.txt"
+          fi
 
       - name: Upload ARM64EC DLL artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: dxvk-2.6.2-arm64ec-${{ github.sha }}
-          path: artifacts/*.zip
+          path: artifacts/dxvk-2.6.2-arm64ec-${{ github.sha }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload combined ARM64EC and x86 WCP
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxvk-2.6.2-fdm-arm64ec-x86-${{ github.sha }}
+          path: artifacts/dxvk-2.6.2-fdm-arm64ec-x86-${{ github.sha }}.wcp
           if-no-files-found: error
           retention-days: 14
 
