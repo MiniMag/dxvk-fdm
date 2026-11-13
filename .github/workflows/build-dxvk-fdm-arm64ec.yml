@@ -255,7 +255,7 @@ jobs:
           tar --zstd -tf "$wcp" | tee "$RUNNER_TEMP/dxvk-arm64ec-logs/wcp-contents.log"
           for directory in system32 syswow64; do
             for dll in d3d8.dll d3d9.dll d3d10core.dll d3d11.dll dxgi.dll; do
-              tar --zstd -tf "$wcp" | grep -Fxq "$directory/$dll"
+              grep -Fxq "$directory/$dll" "$RUNNER_TEMP/dxvk-arm64ec-logs/wcp-contents.log"
             done
           done
           tar --zstd -xOf "$wcp" profile.json \
