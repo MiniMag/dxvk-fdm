@@ -23,6 +23,7 @@ namespace dxvk {
     VkPhysicalDeviceConservativeRasterizationPropertiesEXT    extConservativeRasterization;
     VkPhysicalDeviceCustomBorderColorPropertiesEXT            extCustomBorderColor;
     VkPhysicalDeviceExtendedDynamicState3PropertiesEXT        extExtendedDynamicState3;
+    VkPhysicalDeviceFragmentDensityMapPropertiesEXT           extFragmentDensityMap;
     VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT      extGraphicsPipelineLibrary;
     VkPhysicalDeviceLineRasterizationPropertiesEXT            extLineRasterization;
     VkPhysicalDeviceMultiDrawPropertiesEXT                    extMultiDraw;
@@ -53,6 +54,7 @@ namespace dxvk {
     VkPhysicalDeviceDepthClipEnableFeaturesEXT                extDepthClipEnable;
     VkPhysicalDeviceDepthBiasControlFeaturesEXT               extDepthBiasControl;
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT          extExtendedDynamicState3;
+    VkPhysicalDeviceFragmentDensityMapFeaturesEXT             extFragmentDensityMap;
     VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT        extFragmentShaderInterlock;
     VkBool32                                                  extFullScreenExclusive;
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT        extGraphicsPipelineLibrary;

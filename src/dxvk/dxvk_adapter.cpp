@@ -1,4 +1,5 @@
 #include <cstring>
+#include <sstream>
 #include <unordered_set>
 
 #include "dxvk_adapter.h"
@@ -381,6 +382,15 @@ namespace dxvk {
     enabledFeatures.extDepthClipEnable.depthClipEnable =
       m_deviceFeatures.extDepthClipEnable.depthClipEnable;
 
+    if (devExtensions.extFragmentDensityMap) {
+      enabledFeatures.extFragmentDensityMap.fragmentDensityMap =
+        m_deviceFeatures.extFragmentDensityMap.fragmentDensityMap;
+      enabledFeatures.extFragmentDensityMap.fragmentDensityMapDynamic =
+        m_deviceFeatures.extFragmentDensityMap.fragmentDensityMapDynamic;
+      enabledFeatures.extFragmentDensityMap.fragmentDensityMapNonSubsampledImages =
+        m_deviceFeatures.extFragmentDensityMap.fragmentDensityMapNonSubsampledImages;
+    }
+
     // Used to make pipeline library stuff less clunky
     enabledFeatures.extExtendedDynamicState3.extendedDynamicState3AlphaToCoverageEnable =
       m_deviceFeatures.extExtendedDynamicState3.extendedDynamicState3AlphaToCoverageEnable;
@@ -476,6 +486,8 @@ namespace dxvk {
     Logger::info("Enabled device extensions:");
     this->logNameList(extensionNameList);
     this->logFeatures(enabledFeatures);
+    this->logFragmentDensityMapFeatures(enabledFeatures,
+      extensionsEnabled.supports(devExtensions.extFragmentDensityMap.name()));
 
     // Report the desired overallocation behaviour to the driver
     VkDeviceMemoryOverallocationCreateInfoAMD overallocInfo = { VK_STRUCTURE_TYPE_DEVICE_MEMORY_OVERALLOCATION_CREATE_INFO_AMD };
@@ -601,6 +613,10 @@ namespace dxvk {
           enabledFeatures.extExtendedDynamicState3 = *reinterpret_cast<const VkPhysicalDeviceExtendedDynamicState3FeaturesEXT*>(f);
           break;
 
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT:
+          enabledFeatures.extFragmentDensityMap = *reinterpret_cast<const VkPhysicalDeviceFragmentDensityMapFeaturesEXT*>(f);
+          break;
+
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT:
           enabledFeatures.extFragmentShaderInterlock = *reinterpret_cast<const VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT*>(f);
           break;
@@ -690,6 +706,9 @@ namespace dxvk {
     Logger::info("Enabled device extensions:");
     this->logNameList(extensionNameList);
     this->logFeatures(enabledFeatures);
+    DxvkNameSet enabledExtensions(args.extensionCount, args.extensionNames);
+    this->logFragmentDensityMapFeatures(enabledFeatures,
+      enabledExtensions.supports(VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME));
 
     // Create device loader
     Rc<vk::DeviceFn> vkd = new vk::DeviceFn(m_vki, false, args.device);
@@ -806,6 +825,11 @@ namespace dxvk {
       m_deviceInfo.extExtendedDynamicState3.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.extExtendedDynamicState3);
     }
 
+    if (m_deviceExtensions.supports(VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME)) {
+      m_deviceInfo.extFragmentDensityMap.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_PROPERTIES_EXT;
+      m_deviceInfo.extFragmentDensityMap.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.extFragmentDensityMap);
+    }
+
     if (m_deviceExtensions.supports(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME)) {
       m_deviceInfo.extGraphicsPipelineLibrary.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT;
       m_deviceInfo.extGraphicsPipelineLibrary.pNext = std::exchange(m_deviceInfo.core.pNext, &m_deviceInfo.extGraphicsPipelineLibrary);
@@ -898,6 +922,11 @@ namespace dxvk {
     if (m_deviceExtensions.supports(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME)) {
       m_deviceFeatures.extExtendedDynamicState3.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT;
       m_deviceFeatures.extExtendedDynamicState3.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.extExtendedDynamicState3);
+    }
+
+    if (m_deviceExtensions.supports(VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME)) {
+      m_deviceFeatures.extFragmentDensityMap.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT;
+      m_deviceFeatures.extFragmentDensityMap.pNext = std::exchange(m_deviceFeatures.core.pNext, &m_deviceFeatures.extFragmentDensityMap);
     }
 
     if (m_deviceExtensions.supports(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME)) {
@@ -1058,6 +1087,7 @@ namespace dxvk {
       &devExtensions.extDepthClipEnable,
       &devExtensions.extDepthBiasControl,
       &devExtensions.extExtendedDynamicState3,
+      &devExtensions.extFragmentDensityMap,
       &devExtensions.extFragmentShaderInterlock,
       &devExtensions.extFullScreenExclusive,
       &devExtensions.extGraphicsPipelineLibrary,
@@ -1140,6 +1170,11 @@ namespace dxvk {
     if (devExtensions.extExtendedDynamicState3) {
       enabledFeatures.extExtendedDynamicState3.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT;
       enabledFeatures.extExtendedDynamicState3.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.extExtendedDynamicState3);
+    }
+
+    if (devExtensions.extFragmentDensityMap) {
+      enabledFeatures.extFragmentDensityMap.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT;
+      enabledFeatures.extFragmentDensityMap.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.extFragmentDensityMap);
     }
 
     if (devExtensions.extFragmentShaderInterlock) {
@@ -1429,6 +1464,44 @@ namespace dxvk {
       "\n  extension supported                    : " << (features.nvxImageViewHandle ? "1" : "0") <<
       "\n" << VK_KHR_WIN32_KEYED_MUTEX_EXTENSION_NAME <<
       "\n  extension supported                    : " << (features.khrWin32KeyedMutex ? "1" : "0");
+
+    Logger::info(message.str());
+  }
+
+
+  void DxvkAdapter::logFragmentDensityMapFeatures(
+    const DxvkDeviceFeatures& features,
+          bool                extensionEnabled) const {
+    const auto& supported = m_deviceFeatures.extFragmentDensityMap;
+    const auto& properties = m_deviceInfo.extFragmentDensityMap;
+    bool extensionAvailable = m_deviceExtensions.supports(VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME);
+
+    std::stringstream message;
+    message << VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME <<
+      "\n  extension available                    : " << (extensionAvailable ? "1" : "0") <<
+      "\n  extension enabled                      : " << (extensionEnabled ? "1" : "0") <<
+      "\n  fragmentDensityMap supported           : " << (supported.fragmentDensityMap ? "1" : "0") <<
+      "\n  fragmentDensityMap enabled             : " << (extensionEnabled && features.extFragmentDensityMap.fragmentDensityMap ? "1" : "0") <<
+      "\n  fragmentDensityMapDynamic supported    : " << (supported.fragmentDensityMapDynamic ? "1" : "0") <<
+      "\n  fragmentDensityMapDynamic enabled      : " << (extensionEnabled && features.extFragmentDensityMap.fragmentDensityMapDynamic ? "1" : "0") <<
+      "\n  fragmentDensityMapNonSubsampledImages supported : " << (supported.fragmentDensityMapNonSubsampledImages ? "1" : "0") <<
+      "\n  fragmentDensityMapNonSubsampledImages enabled   : " << (extensionEnabled && features.extFragmentDensityMap.fragmentDensityMapNonSubsampledImages ? "1" : "0") <<
+      "\n  dynamic FDM usable                     : " << (extensionEnabled
+        && features.extFragmentDensityMap.fragmentDensityMap
+        && features.extFragmentDensityMap.fragmentDensityMapDynamic ? "1" : "0");
+
+    if (extensionAvailable) {
+      message <<
+        "\n  min fragment-density texel size        : "
+        << properties.minFragmentDensityTexelSize.width << " x "
+        << properties.minFragmentDensityTexelSize.height <<
+        "\n  max fragment-density texel size        : "
+        << properties.maxFragmentDensityTexelSize.width << " x "
+        << properties.maxFragmentDensityTexelSize.height;
+    } else {
+      message <<
+        "\n  fragment-density texel size limits     : unavailable";
+    }
 
     Logger::info(message.str());
   }

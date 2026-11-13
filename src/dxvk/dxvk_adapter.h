@@ -352,6 +352,9 @@ namespace dxvk {
 
     static void logNameList(const DxvkNameList& names);
     static void logFeatures(const DxvkDeviceFeatures& features);
+    void logFragmentDensityMapFeatures(
+      const DxvkDeviceFeatures& features,
+            bool                extensionEnabled) const;
     static void logQueueFamilies(const DxvkAdapterQueueIndices& queues);
     
     static Version decodeDriverVersion(VkDriverId driverId, uint32_t version);

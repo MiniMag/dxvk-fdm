@@ -1,0 +1,191 @@
+name: Build DXVK 2.6.2 FDM for ARM64EC
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-arm64ec:
+    name: Build ARM64EC DLLs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out committed source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Verify source revision and expected modifications
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "DXVK source commit: $(git rev-parse HEAD)"
+          echo "DXVK version declaration:"
+          grep -F "project('dxvk', ['c', 'cpp'], version : '2.6.2'" meson.build
+
+          # Fail instead of producing a successful artifact from an older
+          # committed revision that does not contain the intended local work.
+          grep -Fq 'VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME' src/dxvk/dxvk_extensions.h
+          grep -Fq 'fragmentDensityMapDynamic' src/dxvk/dxvk_adapter.cpp
+          grep -Fq 'DXVK_DISABLE_TIMELINE_SEMAPHORES' src/dxvk/dxvk_queue.cpp
+          grep -Fq 'DXVK_GPLASYNCCACHE' src/dxvk/dxvk_options.cpp
+          grep -Fq 'dirty=-1-gplasync' meson.build
+
+          mkdir -p "$RUNNER_TEMP/dxvk-arm64ec-logs"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            xz-utils \
+            git \
+            build-essential \
+            python3 \
+            pkg-config \
+            zstd \
+            meson \
+            ninja-build \
+            wget \
+            unzip \
+            zip
+
+      - name: Set up glslang
+        shell: bash
+        run: |
+          set -euo pipefail
+          wget -q \
+            https://github.com/KhronosGroup/glslang/releases/download/master-tot/glslang-master-linux-Release.zip \
+            -O "$RUNNER_TEMP/glslang.zip"
+          mkdir -p "$RUNNER_TEMP/glslang"
+          unzip -q "$RUNNER_TEMP/glslang.zip" -d "$RUNNER_TEMP/glslang"
+          echo "$RUNNER_TEMP/glslang/bin" >> "$GITHUB_PATH"
+
+      - name: Set up LLVM-MinGW 20251104
+        shell: bash
+        run: |
+          set -euo pipefail
+          llvm_mingw_tag=20251104
+          llvm_mingw_archive="llvm-mingw-${llvm_mingw_tag}-ucrt-ubuntu-22.04-x86_64.tar.xz"
+          llvm_mingw_dir="$RUNNER_TEMP/llvm-mingw-${llvm_mingw_tag}-ucrt-ubuntu-22.04-x86_64"
+
+          wget -q \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/${llvm_mingw_tag}/${llvm_mingw_archive}" \
+            -O "$RUNNER_TEMP/llvm-mingw.tar.xz"
+          tar -xf "$RUNNER_TEMP/llvm-mingw.tar.xz" -C "$RUNNER_TEMP"
+          echo "$llvm_mingw_dir/bin" >> "$GITHUB_PATH"
+          export PATH="$llvm_mingw_dir/bin:$PATH"
+
+          arm64ec_target="$(arm64ec-w64-mingw32-clang -print-target-triple)"
+          arm64ec_cpp_target="$(arm64ec-w64-mingw32-clang++ -print-target-triple)"
+          echo "ARM64EC C compiler target: $arm64ec_target"
+          echo "ARM64EC C++ compiler target: $arm64ec_cpp_target"
+          [[ "${arm64ec_target,,}" == *arm64ec* ]]
+          [[ "${arm64ec_cpp_target,,}" == *arm64ec* ]]
+
+          arm64ec-w64-mingw32-clang --version
+          arm64ec-w64-mingw32-clang++ --version
+          llvm-readobj --version
+
+      - name: Configure ARM64EC cross file
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > ../arm64ec.txt <<'EOF'
+          [binaries]
+          c = 'arm64ec-w64-mingw32-clang'
+          cpp = 'arm64ec-w64-mingw32-clang++'
+          ar = 'llvm-ar'
+          strip = 'llvm-strip'
+          windres = 'arm64ec-w64-mingw32-windres'
+          widl = 'arm64ec-w64-mingw32-widl'
+          pkg-config = 'pkg-config'
+
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          EOF
+          cat ../arm64ec.txt
+
+      - name: Configure Meson
+        shell: bash
+        run: |
+          set -euo pipefail
+          meson setup build-ec --cross-file ../arm64ec.txt -Dbuildtype=release -Dstrip=true \
+            2>&1 | tee "$RUNNER_TEMP/dxvk-arm64ec-logs/meson-setup.log"
+
+      - name: Build DXVK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ninja -C build-ec -j 2 \
+            2>&1 | tee "$RUNNER_TEMP/dxvk-arm64ec-logs/ninja-build.log"
+
+      - name: Verify ARM64EC DLLs and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          packaging_dir="$RUNNER_TEMP/dxvk-arm64ec-package"
+          mkdir -p "$packaging_dir/system32" artifacts
+
+          dlls=(
+            build-ec/src/d3d8/d3d8.dll
+            build-ec/src/d3d9/d3d9.dll
+            build-ec/src/d3d10/d3d10core.dll
+            build-ec/src/d3d11/d3d11.dll
+            build-ec/src/dxgi/dxgi.dll
+          )
+
+          for dll in "${dlls[@]}"; do
+            test -f "$dll"
+            cp "$dll" "$packaging_dir/system32/"
+            echo "Inspecting $dll"
+            llvm-readobj --file-headers "$dll" \
+              | tee -a "$RUNNER_TEMP/dxvk-arm64ec-logs/pe-headers.log"
+            llvm-readobj --file-headers "$dll" \
+              | grep -Eq '^[[:space:]]*Machine:[[:space:]]*IMAGE_FILE_MACHINE_ARM64EC([[:space:]]|$)'
+          done
+
+          (
+            cd "$packaging_dir"
+            zip -q -r "$GITHUB_WORKSPACE/artifacts/dxvk-2.6.2-arm64ec-${GITHUB_SHA}.zip" system32
+          )
+
+      - name: Collect Meson diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f build-ec/meson-logs/meson-log.txt ]]; then
+            cp build-ec/meson-logs/meson-log.txt \
+              "$RUNNER_TEMP/dxvk-arm64ec-logs/meson-log.txt"
+          fi
+
+      - name: Upload ARM64EC DLL artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxvk-2.6.2-arm64ec-${{ github.sha }}
+          path: artifacts/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxvk-arm64ec-build-logs-${{ github.run_id }}
+          path: ${{ runner.temp }}/dxvk-arm64ec-logs/
+          if-no-files-found: warn
+          retention-days: 14
